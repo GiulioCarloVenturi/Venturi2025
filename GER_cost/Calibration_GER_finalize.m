@@ -1,0 +1,96 @@
+clear;
+clc;
+load Calibration_GER_f.mat
+
+%% Parameters and Data between 2003 and 2012
+left = find(year(Data_TT.Dates) == max(2000,min(year(Data_TT.Dates))));
+right = find(year(Data_TT.Dates) == 2012); 
+pi_m = prod(1+(Data_TT.Inflation(left:right))/100).^(1/(right-left+1)) - 1;
+i_l = mean(Data_TT.LoanRate(left:right))/100;
+i_D = mean(Data_TT.DepositRate(left:right))/100;
+alpha1 = 0.7083*0.08 + 0.2917*0.00; 
+alpha2 = 0.7083*0.0427 + 0.2917*1.00; 
+alpha3 = 0.7083*0.8773 + 0.2917*0.00; 
+epsilon = 0.001; 
+beta = 0.99;
+rq_ratio = 0.02; 
+i_reserves = mean(Data_TT.MRRRate(left:right))/100; 
+r_reserves = (1+i_reserves)/(1+pi_m)-1;
+i_m = 1/beta*(1+pi_m)-1;
+pi_eff = (1+pi_m)/(1+i_reserves)-1;
+trade_prob = parameters_GER_f(end);
+alpha1 = alpha1*trade_prob;
+alpha2 = alpha2*trade_prob;
+alpha3 = alpha3*trade_prob;
+theta = parameters_GER_f(2);
+sigma = parameters_GER_f(3);
+B = parameters_GER_f(4);
+IF = 0.0037;
+mu_d = 0.0092 + IF; 
+mu_c = 0.0178; 
+mu_db = IF;
+%% Cost of Handling Deposits
+Deposit_Cost = rmmissing(readtimetable("Data_Calibration_GER.xlsx", "UseExcel", false,Sheet="Deposit Cost"));
+Total_Assets = convert2annual(rmmissing(readtimetable("Data_Calibration_GER.xlsx", "UseExcel", false,Sheet="Total Assets")),"Aggregation","mean");
+Cost_TT = synchronize(Deposit_Cost,Total_Assets,'intersection');
+cost = mean((Cost_TT.DepositCost)./Cost_TT.TotalAssets);
+
+%% Functions
+u = @(x) ((x+epsilon).^(1-sigma)-epsilon.^(1-sigma))./(1-sigma);
+du = @(x)(x+epsilon).^(-sigma); 
+d2u = @(x)(x+epsilon).^(-sigma-1)*(-sigma);
+c = @(x)x;                                                         
+dc = @(x)1;
+d2c = @(x)0;
+y_star = 1- epsilon;                    
+g_func = @(x) (1-theta).*u(x)+theta.*c(x);                      
+dg_func = @(x) (1-theta).*du(x)+theta.*dc(x);
+d2g_func = @(x)(1-theta).*d2u(x)+theta.*d2c(x);
+y_grid = linspace(0,y_star,1e4);
+p_grid = g_func(y_grid);
+p_grid_d = g_func(y_grid)/(1-mu_d);
+p_grid_c = g_func(y_grid)/(1-mu_c);
+p_star_d = p_grid_d(end);
+p_star_c = p_grid_c(end);
+y_func = @(p) interp1(p_grid,y_grid,min(p,max(p_grid)));          
+p_func = @(x) min(x,max(p_grid));
+lambda_func = @(z) max(du(y_func(z))./dg_func(y_func(z))-1,0);          
+dlambda_func = @(z) ((d2u(y_func(z)).*dg_func(y_func(z))-du(y_func(z)).*d2g_func(y_func(z)))./dg_func(y_func(z)).^2).*(z<=p_grid(end));
+D_grid = linspace(0,max(p_grid_d),5e3);
+xi_func = @(rho) (1-rq_ratio)*max([1+rho,1+r_reserves])+rq_ratio*(1+r_reserves) - cost;
+rho_bar = fzero(@(x) xi_func(x)-1/beta,[1e-10,2]);
+rho_grid = linspace(r_reserves,rho_bar,100);
+df = @(k) A*eta*k.^(eta-1); 
+df_inv = @(rho) (A*eta./(1+rho)).^(1/(1-eta));
+%% Pass Variables
+otherpar.beta = beta;
+otherpar.epsilon = epsilon;
+otherpar.cost = cost; 
+otherpar.pi_m = pi_m;
+otherpar.spread = (i_l-i_D)/(1+pi_m);
+otherpar.i_D = i_D;
+otherpar.i_l = i_l;
+otherpar.alpha1 = alpha1;
+otherpar.alpha2 = alpha2;
+otherpar.alpha3 = alpha3;
+otherpar.rq_ratio = rq_ratio;
+otherpar.eta = eta; 
+otherpar.lambda_func = lambda_func;
+otherpar.dlambda_func = dlambda_func;
+otherpar.p_star_d = p_star_d;
+otherpar.p_star_c = p_star_c;
+otherpar.rho_bar = rho_bar;
+otherpar.r_reserves= r_reserves;
+otherpar.i_m = i_m;
+otherpar.mu_d = mu_d;
+otherpar.mu_c = mu_c;
+otherpar.df_inv = df_inv;
+otherpar.df = df;
+otherpar.mu_db = mu_db;
+%% Calibrate A and Nb to match loan-deposit spread
+psiz_grid = D_inv_demand(i_m,D_grid,otherpar);
+A = fzero(@(x)calibration_func_v3(x,otherpar,psiz_grid),[1,2]);
+[drate,nb,eq_final,d2c]= calibration_func_v3(A,otherpar,psiz_grid);
+%% Save Parameters
+parameters_GER_final_f=[sigma,B,nb,alpha1,alpha2,alpha3,beta,cost,eta,A,theta];
+save parameters_GER_final_f.mat parameters_GER_final_f Data_TT

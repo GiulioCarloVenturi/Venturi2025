@@ -1,0 +1,38 @@
+function z = SS_eq( alpha1,alpha2,alpha3,z_grid,z_grid_d,lambda_grid,lambda_grid_d,im,ih )
+
+if (im>(alpha1+alpha3)*lambda_grid(1)) && (ih > (alpha2+alpha3)*lambda_grid_d(1))
+    z=[0,0];
+else
+    % LHS cash FOC, 1/beta*1/R_z - 1 = i_m 
+    % Cash such that liquidity premium is equal to cash interest rate
+    zm_can = interp1((alpha1+alpha3)*lambda_grid,z_grid,im); 
+    % Deposits such that liquidity premium is equal to deposit interest rate
+    zh_can = interp1((alpha2+alpha3)*lambda_grid_d,z_grid_d,ih); 
+    % Liquidity premium when holding cash only
+    Ah = alpha2*lambda_grid_d(1)+alpha3*interp1(z_grid,lambda_grid,zm_can); 
+    % Liquidity premium when holding deposits only
+    Am = alpha1*lambda_grid(1)+alpha3*interp1(z_grid_d,lambda_grid_d,zh_can);
+    
+    if Ah<ih
+        z = [zm_can,0];
+    elseif Am<im
+        z = [0,zh_can];
+    else
+        % Liquidity premium and amount of cash for type 1 meetings (cash only) when holding
+        % both cash and deposits
+        AA1 = im-ih+alpha2*lambda_grid_d;
+        zm_zh = interp1(alpha1*lambda_grid,z_grid,AA1);
+        ID = ~isnan(zm_zh);
+        zm_zh = zm_zh(ID);
+        z_grid1 = z_grid(ID);
+        z_grid_d1 = z_grid_d(ID);
+        
+        AA2 = alpha2*lambda_grid_d(ID)+alpha3*interp1(z_grid_d,lambda_grid_d,min(z_grid1+zm_zh,max(z_grid_d)))-ih;
+        [~,ID] = min(abs(AA2));
+        
+        zh =z_grid1(ID);
+        z = [interp1(z_grid1,zm_zh,zh),zh];     
+    end 
+end
+
+end
